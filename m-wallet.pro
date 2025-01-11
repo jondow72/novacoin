@@ -208,6 +208,7 @@ HEADERS += \
     src/walletdb.h \
     src/script.h \
     src/init.h \
+    src/irc.h \
     src/mruset.h \
     src/magimath.h \
     src/json/json_spirit_writer_template.h \
@@ -285,6 +286,7 @@ SOURCES += \
     src/main.cpp \
     src/init.cpp \
     src/net.cpp \
+    src/irc.cpp \
     src/checkpoints.cpp \
     src/addrman.cpp \
     src/db.cpp \
