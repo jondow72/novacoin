@@ -1157,15 +1157,13 @@ void MapPort()
 static const char *strMainNetDNSSeed[] = {
     "seed.m-core.org",
     "seed.m-chain.info",
-    "seed.magi.filoozom.com",
-    "seed.systms.org"
+    "seed.magi.filoozom.com"
 };
 
 static const char *strTestNetDNSSeed[] = {
     "test-seed.m-core.org",
     "test-seed.m-chain.info",
-    "test-seed.magi.filoozom.com",
-    "test-seed.systms.org"
+    "test-seed.magi.filoozom.com"
 };
 
 void ThreadDNSAddressSeed(void* parg)
