@@ -2459,7 +2459,8 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
     // Now that the whole chain is irreversibly beyond that time it is applied to all blocks except the
     // two in the chain that violate it. This prevents exploiting the issue against nodes in their
     // initial block download.
-    bool fEnforceBIP30 = true; // Always active in NovaCoin
+    bool fEnforceBIP30 = true; // Always active in Magi
+    bool fStrictPayToScriptHash = true; // Always active in Magi
     bool fScriptChecks = pindex->nHeight >= Checkpoints::GetTotalBlocksEstimate();
 
     //// issue here: it doesn't know the version
@@ -2477,6 +2478,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
     int64_t nFees = 0;
     int64_t nValueIn = 0;
     int64_t nValueOut = 0;
+    int64_t nStakeReward = 0;
     unsigned int nSigOps = 0;
     for (CTransaction& tx : vtx)
     {
@@ -2546,14 +2548,28 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
 
     if (IsProofOfWork())
     {
-        int64_t nBlockReward = GetProofOfWorkReward(nBits) + nFees;
-
+        int64_t nPoWReward = (IsPoWIIRewardProtocolV2(pindex->pprev->nTime)) ? 
+			    GetProofOfWorkRewardV2(pindex->pprev, nFees, true) : 
+			    GetProofOfWorkReward(pindex->pprev->nBits, pindex->pprev->nHeight, nFees);
         // Check coinbase reward
-        if (vtx[0].GetValueOut() > nBlockReward)
-            return error("CheckBlock() : coinbase reward exceeded (actual=%" PRId64 " vs calculated=%" PRId64 ")",
+        if (vtx[0].GetValueOut() > nPoWReward)
+            return error("CheckBlock() : : coinbase reward exceeded (actual=%"PRId64" vs calculated=%"PRId64", height=%i)",
                    vtx[0].GetValueOut(),
-                   nBlockReward);
+                   nPoWReward,
+		   pindex->pprev->nHeight);
     }
+
+    if (IsProofOfStake()) // the block under processing is PoS
+    {
+        uint64 nCoinAge;
+	bool fTxGetCoinAge = (IsPoSIIProtocolV2(pindex->nHeight)) ? vtx[1].GetCoinAgeV2(txdb, nCoinAge) : vtx[1].GetCoinAge(txdb, nCoinAge);
+        if (!fTxGetCoinAge)
+            return error("ConnectBlock() : %s unable to get coin age for coinstake", vtx[1].GetHash().ToString().substr(0,10).c_str());
+        int64 nPoSReward = GetProofOfStakeReward(nCoinAge, nFees, pindex->pprev);
+        if (nStakeReward > nPoSReward)
+            return error("ConnectBlock() : stake reward exceeded (actual=%"PRId64" vs calculated=%"PRId64", height=%i)", nStakeReward, nPoSReward, pindex->nHeight));
+    }
+
 
     // track money supply and mint amount info
     pindex->nMint = nValueOut - nValueIn + nFees;
@@ -2840,6 +2856,55 @@ bool CBlock::SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew)
 // guaranteed to be in main chain by sync-checkpoint. This rule is
 // introduced to help nodes establish a consistent view of the coin
 // age (trust score) of competing branches.
+bool CTransaction::GetCoinAgeV2(CTxDB& txdb, uint64_t& nCoinAge) const
+{
+    CBigNum bnCentSecond = 0;  // coin age in the unit of cent-seconds
+    int64 nValueIn, nTimeWeight;
+    nCoinAge = 0;
+
+    if (IsCoinBase())
+        return true;
+
+    for (const CTxIn& txin : vin)
+    {
+        // First try finding the previous transaction in database
+        CTransaction txPrev;
+        CTxIndex txindex;
+
+	if (!txPrev.ReadFromDisk(txdb, txin.prevout, txindex))
+            continue;  // previous transaction not in main chain
+        if (nTime < txPrev.nTime)
+            return false;  // Transaction timestamp violation
+
+        // Read block header
+        CBlock block;
+        if (!block.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false))
+            return false; // unable to read block of previous transaction
+
+        nValueIn = txPrev.vout[txin.prevout.n].nValue;
+        nTimeWeight = GetMagiWeightV2(nValueIn, block.GetBlockTime(), nTime);
+            if (nTimeWeight < GetStakeMinAge(nTime))
+            continue; // only count coins meeting min age requirement
+
+        nTimeWeight = GetMagiWeightV2(nValueIn, txPrev.nTime, nTime);
+        bnCentSecond += CBigNum(nValueIn) * nTimeWeight / CENT;
+
+	CBigNum bnCoinDayPrint = CBigNum(nValueIn) * nTimeWeight / COIN / (24 * 60 * 60);
+
+	if (fDebugMagiPoS)
+            printf("@Tx.GetCoinAgeV2 -> nValueIn=%"PRI64d"  txPrev.nTime=%d  nTimeDiff=%d  nTimeDiff=%d  bnCoinDay=%s\n", nValueIn / COIN, txPrev.nTime, nTime, nTime - txPrev.nTime, bnCoinDayPrint.ToString().c_str());
+	
+        if (fDebug && GetBoolArg("-printcoinage"))
+            printf("coin age nValueIn=%"PRI64d" nTimeDiff=%d bnCentSecond=%s\n", nValueIn, nTime - txPrev.nTime, bnCentSecond.ToString().c_str());
+    }
+
+    CBigNum bnCoinDay = bnCentSecond * CENT / COIN / (24 * 60 * 60);
+    if (fDebug && GetBoolArg("-printcoinage"))
+        printf("coin age bnCoinDay=%s\n", bnCoinDay.ToString().c_str());
+    nCoinAge = bnCoinDay.getuint64();
+    return true;
+}
+
 bool CTransaction::GetCoinAge(CTxDB& txdb, uint64_t& nCoinAge) const
 {
     CBigNum bnCentSecond = 0;  // coin age in the unit of cent-seconds
@@ -2862,17 +2927,25 @@ bool CTransaction::GetCoinAge(CTxDB& txdb, uint64_t& nCoinAge) const
         CBlock block;
         if (!block.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false))
             return false; // unable to read block of previous transaction
-        if (block.GetBlockTime() + nStakeMinAge > nTime)
+
+        nValueIn = txPrev.vout[txin.prevout.n].nValue;
+        nTimeWeight = GetMagiWeight(nValueIn, block.GetBlockTime(), nTime);
+            if (nTimeWeight < GetStakeMinAge(nTime))
             continue; // only count coins meeting min age requirement
 
-        int64_t nValueIn = txPrev.vout[txin.prevout.n].nValue;
-        bnCentSecond += CBigNum(nValueIn) * (nTime-txPrev.nTime) / CENT;
+        nTimeWeight = GetMagiWeight(nValueIn, txPrev.nTime, nTime);
+        bnCentSecond += CBigNum(nValueIn) * nTimeWeight / CENT;
+
+	CBigNum bnCoinDayPrint = CBigNum(nValueIn) * nTimeWeight / COIN / (24 * 60 * 60);
+
+	if (fDebugMagiPoS)
+            printf("@Tx.GetCoinAge -> nValueIn=%"PRI64d"  txPrev.nTime=%d  nTimeDiff=%d  nTimeDiff=%d  bnCoinDay=%s\n", nValueIn / COIN, txPrev.nTime, nTime, nTime - txPrev.nTime, bnCoinDayPrint.ToString().c_str());
 
         if (fDebug && GetBoolArg("-printcoinage"))
             printf("coin age nValueIn=%" PRId64 " nTimeDiff=%d bnCentSecond=%s\n", nValueIn, nTime - txPrev.nTime, bnCentSecond.ToString().c_str());
     }
 
-    CBigNum bnCoinDay = bnCentSecond * CENT / COIN / nOneDay;
+    CBigNum bnCoinDay = bnCentSecond * CENT / COIN / (24 * 60 * 60);
     if (fDebug && GetBoolArg("-printcoinage"))
         printf("coin age bnCoinDay=%s\n", bnCoinDay.ToString().c_str());
     nCoinAge = bnCoinDay.getuint64();
