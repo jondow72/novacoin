@@ -1463,7 +1463,7 @@ unsigned int ComputeMaxBits(CBigNum bnTargetLimit, unsigned int nBase, int64 nTi
     {
         // Maximum 200% adjustment per day...
         bnResult *= 2;
-        nTime -= 24 * 60 * 60;
+        nTime -= nOneDay;
     }
     if (bnResult > bnTargetLimit)
         bnResult = bnTargetLimit;
@@ -3165,6 +3165,42 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
     return true;
 }
 
+#define BLOCK_VALID_CHECK_INIT_HEIGHT 1481500
+bool IsBlockInvalid(int nHeight0, int64 nTime, bool fProofOfStake, const CBlockIndex* pindexPrev)
+{
+    return ( fProofOfStake ? 
+             IsProofOfStakeBlockInvalid(nHeight0, nTime, fProofOfStake, pindexPrev) : 
+             IsProofOfWorkBlockInvalid(nHeight0, nTime, fProofOfStake, pindexPrev) );
+}
+
+/* two PoS blocks must be confirmed in-between PoW blocks */
+bool IsProofOfWorkBlockInvalid(int nHeight0, int64 nTime, bool fProofOfStake, const CBlockIndex* pindexPrev)
+{
+    if (IsChainRuleSwitchedOff(nHeight0)) return false; 
+    if (fProofOfStake || nHeight0 < BLOCK_VALID_CHECK_INIT_HEIGHT) return false;
+    const CBlockIndex* pindexPrevPoW = GetLastBlockIndex(pindexPrev, false);
+    if ( (nHeight0 - pindexPrevPoW->nHeight > 2) || 
+        ( nTime - pindexPrevPoW->GetBlockTime() > GetMaxPoWWaitingTime() ) )
+        return false;
+    return true;
+}
+
+/* within five blocks contain at least one PoW block */
+bool IsProofOfStakeBlockInvalid(int nHeight0, int64 nTime, bool fProofOfStake, const CBlockIndex* pindexPrev)
+{
+    if (IsChainRuleSwitchedOff(nHeight0)) return false; 
+    if (!fProofOfStake || nHeight0 < BLOCK_VALID_CHECK_INIT_HEIGHT) return false;
+    const CBlockIndex* pindexPrevPoS = GetLastBlockIndex(pindexPrev, true);
+    if ( nTime - pindexPrevPoS->GetBlockTime() > GetMaxPoSWaitingTime() ) return false;
+    bool f = false;
+    while (pindexPrev && nHeight0 - pindexPrev->nHeight < 5)
+    {
+        f |= pindexPrev->IsProofOfWork();
+        pindexPrev = pindexPrev->pprev;
+    }
+    return !f;
+}
+
 bool CBlock::AcceptBlock()
 {
     // Check for duplicate
@@ -3626,13 +3662,17 @@ bool LoadBlockIndex(bool fAllowNew)
 {
     if (fTestNet)
     {
-        pchMessageStart[0] = 0xcd;
-        pchMessageStart[1] = 0xf2;
-        pchMessageStart[2] = 0xc0;
-        pchMessageStart[3] = 0xef;
+        pchMessageStart[0] = 0xf0;
+        pchMessageStart[1] = 0xb9;
+        pchMessageStart[2] = 0xb3;
+        pchMessageStart[3] = 0xd7;
 
-        bnProofOfWorkLimit = bnProofOfWorkLimitTestNet; // 16 bits PoW target limit for testnet
-        nStakeMinAge = 2 * nOneHour; // test net min age is 2 hours
+        bnProofOfStakeLimit = bnProofOfStakeLimitTestNet; // 0x00000fff PoS base target is fixed in testnet
+        bnProofOfWorkLimit = bnProofOfWorkLimitTestNet;  // 0x0000ffff PoW base target is fixed in testnet
+
+        nStakeMinAge = 60 * 10; 		// test net min age: 10 min
+        nStakeMaxAge = 60 * 60 * 24 * 60;	// test net max age: 60 days
+
         nModifierInterval = 20 * 60; // test modifier interval is 20 minutes
         nCoinbaseMaturity = 10; // test maturity is 10 blocks
         nStakeTargetSpacing = 5 * 60; // test block spacing is 5 minutes
@@ -3671,9 +3711,9 @@ bool LoadBlockIndex(bool fAllowNew)
         //    CTxOut(empty)
         //  vMerkleTree: 4cb33b3b6a
 
-        const std::string strTimestamp = "https://bitcointalk.org/index.php?topic=134179.msg1502196#msg1502196";
+        const std::string strTimestamp = "Super fracking, Physics Today 67(8), 34 (2014); doi: 10.1063/PT.3.2480";
         CTransaction txNew;
-        txNew.nTime = 1360105017;
+        txNew.nTime = 1407209706;
         txNew.vin.resize(1);
         txNew.vout.resize(1);
         txNew.vin[0].scriptSig = CScript() << 486604799 << CBigNum(9999) << std::vector<unsigned char>(strTimestamp.begin(), strTimestamp.end());
@@ -3683,12 +3723,12 @@ bool LoadBlockIndex(bool fAllowNew)
         block.hashPrevBlock = 0;
         block.hashMerkleRoot = block.BuildMerkleTree();
         block.nVersion = 1;
-        block.nTime    = 1360105017;
+        block.nTime    = !fTestNet ? 1407209708 : 1410566399;
         block.nBits    = bnProofOfWorkLimit.GetCompact();
-        block.nNonce   = !fTestNet ? 1575379 : 46534;
+        block.nNonce   = !fTestNet ? 24141715 : 1780637;
 
         //// debug print
-        assert(block.hashMerkleRoot == uint256("0x4cb33b3b6a861dcbc685d3e614a9cafb945738d6833f182855679f2fad02057b"));
+        assert(block.hashMerkleRoot == uint256("70070d9e41ffd85685f8017fa8620fb5572ed8443822d799015d01d39e7fd4af"));
         block.print();
         assert(block.GetHash() == (!fTestNet ? hashGenesisBlock : hashGenesisBlockTestNet));
         assert(block.CheckBlock());
