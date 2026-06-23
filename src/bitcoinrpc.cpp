@@ -34,7 +34,7 @@ const Object emptyobj;
 
 static inline unsigned short GetDefaultRPCPort()
 {
-    return GetBoolArg("-testnet", false) ? 18344 : 8344;
+    return GetBoolArg("-testnet", false) ? 18232 : 8232;
 }
 
 Object JSONRPCError(int code, const std::string& message)
