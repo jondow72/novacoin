@@ -9,6 +9,7 @@
 #include "sync.h"
 #include "net.h"
 #include "script.h"
+#include "hash_magi.h"
 
 #include <algorithm>
 #include <limits>
@@ -30,20 +31,37 @@ class CNode;
 // Global state
 //
 
+static const int MAX_MAGI_POW_HEIGHT = 25000000;
+static const int PRM_MAGI_POW_HEIGHT = 80000;
+static const int PRM_MAGI_POW_HEIGHT_V2 = 50000; // re-cal PoW-I end block
+static const int END_MAGI_POW_HEIGHT = 500000;
+static const int END_MAGI_POW_HEIGHT_V2 = 5000000; // PoW-II aims to issue 12 mil and more than 10 years
+
+static const int BLOCK_REWARD_ADJT = 2700;
+static const int BLOCK_REWARD_ADJT_M7M_V2 = 32750;
+
 static const unsigned int MAX_BLOCK_SIZE = 1000000;
 static const unsigned int MAX_BLOCK_SIZE_GEN = MAX_BLOCK_SIZE/2;
 static const unsigned int MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE/50;
 static const unsigned int MAX_ORPHAN_TRANSACTIONS = MAX_BLOCK_SIZE/100;
 static const unsigned int MAX_INV_SZ = 50000;
-
-static const int64_t MIN_TX_FEE = CENT/10;
-static const int64_t MIN_RELAY_TX_FEE = CENT/50;
-
-static const int64_t MAX_MONEY = std::numeric_limits<int64_t>::max();
+static const int64_t COINS_BURNED = 720000 * COIN; // Notes: https://bitcointalk.org/index.php?topic=735170.msg9475622#msg9475622
+static const int64_t MIN_TX_FEE = .0001 * COIN;
+static const int64_t MIN_RELAY_TX_FEE = MIN_TX_FEE;
+static const int64 MAX_MONEY = 25000000 * COIN + COINS_BURNED;  // NOte: the amount of COINS_BURNED is unspendable
+//static const int64 MAX_MONEY_POW_PRM = 10000000 * COIN;	// 10 mil; 5.5 mil in 1st magipow
+//static const int64 MAX_MONEY_POW_END = 15000000 * COIN;	// 15 mil; 5 mil in 2nd magipow
+static const double MAX_MAGI_PROOF_OF_STAKE = 0.05;		// dynamic annual interest, max 5%
+static const double MAX_MAGI_BALANCE_in_STAKE = 0.15;		// balance/money supply, max 15%
+static const int64_t MAX_MONEY_STAKE_REF = 5000000 * COIN;	// 5 mil
+static const int64_t MAX_MONEY_STAKE_REF_V2 = 500000 * COIN;	// 0.5 mil
 static const int64_t MAX_MINT_PROOF_OF_WORK = 100 * COIN;
 static const int64_t MAX_MINT_PROOF_OF_STAKE = 1 * COIN;
-static const int64_t MIN_TXOUT_AMOUNT = CENT/100;
 
+static const int64_t MIN_TXOUT_AMOUNT = MIN_TX_FEE;
+
+static const int nCoinbaseMaturity = 100;            // 100 blocks
+static const int nCoinbaseMaturityADJ = 500;            // 500 blocks
 
 inline bool MoneyRange(int64_t nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
 // Threshold for nLockTime: below this value it is interpreted as block number, otherwise as UNIX timestamp.
@@ -51,13 +69,103 @@ static const unsigned int LOCKTIME_THRESHOLD = 500000000; // Tue Nov  5 00:53:20
 // Maximum number of script-checking threads allowed
 static const int MAX_SCRIPTCHECK_THREADS = 16;
 
-static const uint256 hashGenesisBlock("0x00000a060336cbb72fe969666d337b87198b1add2abaa59cca226820b32933a4");
-static const uint256 hashGenesisBlockTestNet("0x000c763e402f2436da9ed36c7286f62c3f6e5dbafce9ff289bd43d7459327eb");
+inline bool IsMiningProofOfWork(int nHeight)
+{
+    return nHeight <= MAX_MAGI_POW_HEIGHT;
+}
+//inline bool IsMiningProofOfWork() { return true; }
 
-inline int64_t PastDrift(int64_t nTime)   { return nTime - 2 * nOneHour; } // up to 2 hours from the past
-inline int64_t FutureDrift(int64_t nTime) { return nTime + 2 * nOneHour; } // up to 2 hours from the future
+inline bool IsMiningProofOfStake(int nHeight ) 
+{
+    if (fTestNet) return nHeight > 10;
+    if (nHeight <= BLOCK_REWARD_ADJT) return (nHeight > 6720); // two weeks
+    else return (nHeight > 10080); // three weeks
+}
+
+//#define FORK_BLOCK_REWARDS_V2_TESNT 1419402600
+#define FORK_BLOCK_REWARDS_V2_TESNT 0
+#define FORK_BLOCK_REWARDS_V2 1420650000
+#define HEIGHT_CHAIN_SWITCH 1606950
+#define HEIGHT_PROTOCOL_V3 1825100
+
+inline bool IsPoWIIRewardProtocolV2(unsigned int nTime0)
+{
+    if (fTestNet) {
+	   return (nTime0 > FORK_BLOCK_REWARDS_V2_TESNT);
+    } else {
+	   return (nTime0 > FORK_BLOCK_REWARDS_V2);
+    }
+}
+
+inline bool IsPoSIIProtocolV2(int nHeight)
+{
+    if (fTestNet) {
+    	if (nHeight > 40860) fTestNetWeightV2 = true;
+	   else fTestNetWeightV2 = false;
+	   return nHeight > 40780;
+    } else return (nHeight > 131300);
+}
+
+inline bool IsProtocolV3(int nHeight)
+{
+    if (fTestNet) return true;
+    return (nHeight > HEIGHT_PROTOCOL_V3);
+}
+
+inline bool IsBlockVersion5(int nHeight) { return fTestNet || nHeight > 1446791; }
+inline unsigned int GetStakeMinAge(unsigned int nTime0) { return ( (nTime0 > 1503248400) ? (60 * 60 * 8) : (60 * 60 * 2) ); }
+
+inline int64 GetMaxPoWWaitingTime()
+{
+    return (10 * 60); // Maximum time for PoW on hold
+}
+
+inline int64 GetMaxPoSWaitingTime()
+{
+    return (3 * 60); // Maximum time for PoS on hold
+}
+
+static const uint256 hashGenesisBlock("0x000004c91ca895a8c63176b1671eff34291ad671e59ae46630ffd8f985dd56cc");
+static const uint256 hashGenesisBlockTestNet("0x0000036df26f4d11af604f86b7bdc5ce5f8bee17a3c6f57e9e6e800ef21d8447");
+
+static const int64_t nMaxClockDriftV1 = 2 * 60 * 60;      // two hours
+static const int64_t nMaxClockDriftV2 = 5 * 60;           // 5 mins
+static const int64_t nMaxClockDriftV3 = 30;               // 30 secs
+
+inline int64_t GetMaxClockDrift(int nHeight) 
+{
+//    return ( (nHeight > HEIGHT_CHAIN_SWITCH) ? nMaxClockDriftV2 : nMaxClockDriftV1 ); 
+    if (fTestNet) return nMaxClockDriftV3;
+    if (nHeight > HEIGHT_CHAIN_SWITCH && nHeight <= HEIGHT_PROTOCOL_V3)
+        return nMaxClockDriftV2;
+    else if (nHeight > HEIGHT_PROTOCOL_V3)
+        return nMaxClockDriftV3;
+    return nMaxClockDriftV1;
+}
+
+inline int64_t PastDrift(int64 nTime, int nHeight) { return ( nTime - GetMaxClockDrift(nHeight) ); }
+inline int64_t FutureDrift(int64 nTime, int nHeight) { return ( nTime + GetMaxClockDrift(nHeight) ); }
+inline int64_t FutureDriftCoinbaseV1(int64 nTime, int nHeight) { return ( nTime + nMaxClockDriftV1 ); }
+inline int64_t FutureDriftCoinbaseV2(int64 nTime, int nHeight) { return ( nTime + 30 * 60 ); }
+
+inline int64_t FutureDriftCoinbase(int64 nTime, int nHeight) 
+{
+    if (fTestNet) return FutureDriftCoinbaseV2(nTime, nHeight);
+    if (nHeight > HEIGHT_PROTOCOL_V3)
+        return FutureDriftCoinbaseV2(nTime, nHeight);
+    return FutureDriftCoinbaseV1(nTime, nHeight);
+}
+
+inline bool IsChainAtSwitchPoint(int nHeight) { return (nHeight == HEIGHT_CHAIN_SWITCH); }
+inline bool IsChainRuleSwitchedOff(int nHeight) { return (nHeight > HEIGHT_CHAIN_SWITCH); }
+inline unsigned int GetStakeTargetSpacing(int nHeight) { return IsProtocolV3(nHeight) ? 96 : 90; }
+
+int64_t GetTargetSpacingWork(int nHeight);
+int64_t GetTargetSpacing(bool fProofOfStake);
+int64_t GetTargetTimespan(bool fProofOfStake);
 
 extern CScript COINBASE_FLAGS;
+
 extern CCriticalSection cs_main;
 extern std::map<uint256, CBlockIndex*> mapBlockIndex;
 extern std::set<std::pair<COutPoint, unsigned int> > setStakeSeen;
@@ -119,8 +227,9 @@ void ThreadScriptCheckQuit();
 
 bool CheckProofOfWork(uint256 hash, unsigned int nBits);
 unsigned int GetNextTargetRequired(const CBlockIndex* pindexLast, bool fProofOfStake);
-int64_t GetProofOfWorkReward(unsigned int nBits);
-int64_t GetProofOfStakeReward(int64_t nCoinAge, unsigned int nBits, int64_t nTime, bool bCoinYearOnly=false);
+int64_t GetProofOfWorkReward(int nBits, int nHeight, int64 nFees);
+int64_t GetProofOfWorkRewardV2(const CBlockIndex* pindexPrev, int64 nFees, bool fLastBlock);
+int64_t GetProofOfStakeReward(int64 nCoinAge, int64 nFees, CBlockIndex* pindex);
 unsigned int ComputeMinWork(unsigned int nBase, int64_t nTime);
 unsigned int ComputeMinStake(unsigned int nBase, int64_t nTime, unsigned int nBlockTime);
 int GetNumBlocksOfPeers();
@@ -593,7 +702,7 @@ public:
     {
         // Large (in bytes) low-priority (new, small-coin) transactions
         // need a fee.
-        return dPriority > COIN * 144 / 250;
+        return dPriority > COIN * 1440 / 250;
     }
 
     int64_t GetMinFee(unsigned int nBlockSize=1, bool fAllowFree=false, enum GetMinFee_mode mode=GMF_BLOCK, unsigned int nBytes = 0) const;
@@ -934,7 +1043,25 @@ public:
         return (nBits == 0);
     }
 
-    uint256 GetHash() const;
+    uint256 GetHash() const
+    {
+        if (fTestNet) {
+            return hash_M7M_v2(BEGIN(nVersion), END(nNonce), nNonce);
+            /*
+            if(nTime < 1413590400) {
+                return hash_M7M(BEGIN(nVersion), END(nNonce));
+            } else {
+                return hash_M7M_v2(BEGIN(nVersion), END(nNonce), nNonce);
+            }
+            */
+        } else {
+            if(nTime < 1414330200) {
+                return hash_M7M(BEGIN(nVersion), END(nNonce));
+            } else {
+                return hash_M7M_v2(BEGIN(nVersion), END(nNonce), nNonce);
+            }
+        }
+    }
 
     int64_t GetBlockTime() const
     {
