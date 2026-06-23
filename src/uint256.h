@@ -10,7 +10,13 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
+#include <gmpxx.h>
 
+typedef long long  int64;
+typedef unsigned long long  uint64;
+
+
+inline int Testuint256AdHoc(std::vector<std::string> vArg);
 
 /** Base class without constructors for uint256 and uint160.
  * This makes the compiler let u use it in a union.
@@ -407,10 +413,13 @@ public:
 
     friend class uint160;
     friend class uint256;
+    friend class uint512;
+    friend inline int Testuint256AdHoc(std::vector<std::string> vArg);
 };
 
 typedef base_uint<160> base_uint160;
 typedef base_uint<256> base_uint256;
+typedef base_uint<512> base_uint512;
 
 //
 // uint160 and uint256 could be implemented as templates, but to keep
