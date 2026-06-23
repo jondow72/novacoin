@@ -48,6 +48,7 @@ bool fTestNet = false;
 bool fNoListen = false;
 bool fLogTimestamps = false;
 bool fReopenDebugLog = false;
+bool fTestNetWeightV2 = false;
 
 // Extended DecodeDumpTime implementation, see this page for details:
 // http://stackoverflow.com/questions/3786201/parsing-of-date-time-from-string-boost
