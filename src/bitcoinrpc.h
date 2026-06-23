@@ -132,8 +132,11 @@ extern int64_t AmountFromValue(const json_spirit::Value& value);
 extern json_spirit::Value ValueFromAmount(int64_t amount);
 extern double GetDifficulty(const CBlockIndex* blockindex = NULL);
 
+extern double GetPoWHashPS(int lookup = 120, int height = -1);
 extern double GetPoWMHashPS();
-extern double GetPoSKernelPS();
+extern double GetPoSKernelPS(const CBlockIndex* blockindex = NULL, int lookup = 72);
+extern double GetPoSKernelPSV2(const CBlockIndex* blockindex = NULL, int lookup = 72);
+extern double GetPoSKernelPSV3(const CBlockIndex* blockindex = NULL);
 
 extern std::string HexBits(unsigned int nBits);
 extern std::string HelpRequiringPassphrase();
