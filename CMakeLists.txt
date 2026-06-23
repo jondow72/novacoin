@@ -146,6 +146,7 @@ set(generic_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/src/addrman.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/db.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/walletdb.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/magimath.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/uint256.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/qt/clientmodel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/qt/guiutil.cpp
@@ -208,6 +209,14 @@ set(generic_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/src/qt/multisigdialog.ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/qt/secondauthdialog.ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/qt/qrcodedialog.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/keccak.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/haval.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/ripemd.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/sha2.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/sha2big.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/tiger.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/whirlpool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hash_magi.h
 )
 
 # Copy translations as a workaround for `make clean`
