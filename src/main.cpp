@@ -63,8 +63,6 @@ static const int64 nTargetSpacingV3Work = 60 * 4;   // 4 min
 
 static const int64 nTargetSpacingWork = 2 * 90; // 3 min PoW block spacing
 
-int nCoinbaseMaturity = 500;
-
 int64 nChainStartTime = 1407209706;
 CBlockIndex* pindexGenesisBlock = NULL;
 int nBestHeight = -1;
